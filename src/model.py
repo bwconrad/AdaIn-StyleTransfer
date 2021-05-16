@@ -1,11 +1,12 @@
 import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from torchvision.utils import make_grid
+from torchvision.utils import make_grid, save_image
 from torch.optim import lr_scheduler, Adam
 from collections import OrderedDict
 
 from .network import VGGEncoder, AdaIn, Decoder
+from .loss import ContentLoss, StyleLoss
 
 
 class ASTModel(pl.LightningModule):
@@ -16,8 +17,8 @@ class ASTModel(pl.LightningModule):
 
         Args:
             lr: Learning rate
-            weight_content: weight for content loss
-            weight_style: weight for style loss
+            weight_content: Weight for content loss
+            weight_style: Weight for style loss
         """
         super().__init__()
         self.save_hyperparameters()
@@ -31,38 +32,22 @@ class ASTModel(pl.LightningModule):
         self.encoder = VGGEncoder()
         self.ada_in = AdaIn()
         self.decoder = Decoder()
+        self.content_loss = ContentLoss()
+        self.style_loss = StyleLoss(use_statistics=True)
 
-    def forward(self, c, s):
+    def forward(self, c, s, alpha=1.0):
         # Pass content and style images through encoder
         f_c = self.encoder(c)
         f_s = self.encoder(s, return_all=True)
 
         # Apply AdaIn
         t = self.ada_in(f_c, f_s[-1])
+        t = alpha * t + (1 - alpha) * f_c
 
         # Decode back
         g_t = self.decoder(t)
 
         return g_t, t, f_c, f_s
-
-    def content_loss(self, pred, target):
-        assert pred.size() == target.size()
-        return F.mse_loss(pred, target)
-
-    def style_loss(self, pred, target):
-        assert len(pred) == len(target)
-        loss = 0
-        for p, t in zip(pred, target):
-            assert p.size() == t.size()
-            p_mean, p_std = self.get_mean_std(p)
-            t_mean, t_std = self.get_mean_std(t)
-            loss += F.mse_loss(p_mean, t_mean) + F.mse_loss(p_std, t_std)
-        return loss
-
-    def get_mean_std(self, x):
-        mean = torch.mean(x, axis=(2, 3), keepdim=True)
-        std = torch.std(x, dim=(2, 3), keepdim=True) + 1e-6
-        return mean, std
 
     def training_step(self, batch, batch_idx):
         img_c = batch["content"]
@@ -105,7 +90,7 @@ class ASTModel(pl.LightningModule):
 
     def validation_epoch_end(self, outputs):
         imgs = torch.cat([x["val_sample"] for x in outputs], 0)
-        grid = make_grid(imgs, nrow=3)
+        grid = make_grid(imgs, nrow=3, normalization=True)
         self.logger.experiment.add_image("val_samples", grid, self.global_step)
 
     def configure_optimizers(self):
