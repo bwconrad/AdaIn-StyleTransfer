@@ -1,6 +1,5 @@
 import pytorch_lightning as pl
 from pytorch_lightning.utilities.cli import LightningArgumentParser
-from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 from argparse import Namespace
 import os
